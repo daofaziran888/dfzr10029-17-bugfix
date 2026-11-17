@@ -21,6 +21,12 @@ class ActionResult(BaseModel):
     entry: dict[str, Any] | None = None
 
 
+class ShardValidationResult(ActionResult):
+    """分片校验编排结果：带上本次消费结果，便于页面核对。"""
+
+    verification: dict[str, Any] = Field(default_factory=dict)
+
+
 class EntryPayload(BaseModel):
     """登记或修改一条业务记录时提交的字段集合。"""
 
@@ -33,6 +39,19 @@ class ActionPayload(BaseModel):
 
     action: str
     remark: str | None = None
+
+
+class ShardValidationPayload(BaseModel):
+    """快照分片校验提交：一次编排同一版本的多条分片校验记录。
+
+    request_id 用于重复提交去重；多次提交同一 request_id 只落一份有效结果。
+    """
+
+    shards: list[dict[str, Any]] = Field(default_factory=list)
+    version: str | None = None
+    total_shards: int | None = None
+    repair: bool = False
+    request_id: str | None = None
 
 
 

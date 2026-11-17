@@ -8,7 +8,13 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 
-from app.schemas import ActionPayload, ActionResult, EntryPayload
+from app.schemas import (
+    ActionPayload,
+    ActionResult,
+    EntryPayload,
+    ShardValidationPayload,
+    ShardValidationResult,
+)
 from app.services.snapshot import SnapshotService
 
 router = APIRouter(prefix="/api/snapshot", tags=["数据快照"])
@@ -46,6 +52,17 @@ def export_entries() -> StreamingResponse:
                              headers={"Content-Disposition": "attachment; filename=snapshot.csv"})
 
 
+@router.get("/shards")
+def list_shards(
+    snapshot_code: str | None = Query(default=None, alias="快照编号"),
+    version: str | None = Query(default=None, alias="版本"),
+    page: int = Query(default=1, ge=1),
+    size: int = Query(default=20, ge=1, le=200),
+) -> dict[str, Any]:
+    """读取快照分片校验记录：按（快照编号, 版本, 分片序号）稳定排序后分页。"""
+    return service.list_shards(snapshot_code, version, page, size)
+
+
 @router.get("/{entry_id}")
 def get_entry(entry_id: int) -> dict:
     entry = service.get_entry(entry_id)
@@ -68,3 +85,28 @@ def run_action(entry_id: int, payload: ActionPayload) -> ActionResult:
     if entry_or_none is None:
         return ActionResult(ok=False, message=message)
     return ActionResult(ok=True, message=message, entry=entry_or_none)
+
+
+@router.post("/{entry_id}/shards/validate")
+def validate_shards(entry_id: int, payload: ShardValidationPayload) -> ShardValidationResult:
+    """编排快照分片校验记录并验证消费结果：完成状态与分片校验一起判定。"""
+    entry_or_none, message, verification = service.validate_shards(
+        entry_id,
+        payload.shards,
+        version=payload.version,
+        repair=payload.repair,
+        request_id=payload.request_id,
+        total_shards=payload.total_shards,
+    )
+    if entry_or_none is None:
+        return ShardValidationResult(ok=False, message=message, verification=verification)
+    return ShardValidationResult(ok=True, message=message, entry=entry_or_none, verification=verification)
+
+
+@router.post("/{entry_id}/recover")
+def recover(entry_id: int, version: str | None = Query(default=None, alias="版本")) -> ActionResult:
+    """恢复入口：只打开通过分片校验的可恢复版本；可显式指定回滚到的历史完整版本。"""
+    result, message = service.recover(entry_id, version=version)
+    if result is None:
+        return ActionResult(ok=False, message=message)
+    return ActionResult(ok=True, message=message, entry=result)
